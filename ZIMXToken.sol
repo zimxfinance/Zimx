@@ -3,22 +3,16 @@ pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
-import "@openzeppelin/contracts/security/Pausable.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Pausable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 /**
  * @title ZIMXToken
  * @notice ZIMX utility token with fixed supply and emergency pause.
  */
-contract ZIMXToken is ERC20, ERC20Burnable, Pausable, Ownable {
+contract ZIMXToken is ERC20, ERC20Burnable, ERC20Pausable, Ownable {
     /// @notice Address receiving the initial token supply and holding treasury funds.
     address public treasury;
-
-    /// @notice Emitted when the contract is paused.
-    event Paused(address account);
-
-    /// @notice Emitted when the contract is unpaused.
-    event Unpaused(address account);
 
     /// @notice Emitted when the treasury wallet is updated.
     event TreasuryUpdated(address indexed newTreasury);
@@ -77,16 +71,4 @@ contract ZIMXToken is ERC20, ERC20Burnable, Pausable, Ownable {
         _unpause();
     }
 
-    /**
-     * @dev Overrides the underlying ERC20 transfer to honor the pause state.
-     * Transfers are blocked while the contract is paused.
-     * @inheritdoc ERC20
-     */
-    function _transfer(
-        address from,
-        address to,
-        uint256 amount
-    ) internal override whenNotPaused {
-        super._transfer(from, to, amount);
-    }
 }
