@@ -14,6 +14,12 @@ contract ZIMXToken is ERC20, ERC20Burnable, Pausable, Ownable {
     /// @notice Address receiving the initial token supply and holding treasury funds.
     address public treasury;
 
+    /// @notice Emitted when the contract is paused.
+    event Paused(address account);
+
+    /// @notice Emitted when the contract is unpaused.
+    event Unpaused(address account);
+
     /// @notice Emitted when the treasury wallet is updated.
     event TreasuryUpdated(address indexed newTreasury);
 
@@ -28,6 +34,7 @@ contract ZIMXToken is ERC20, ERC20Burnable, Pausable, Ownable {
     {
         require(initialOwner != address(0), "Owner address is zero");
         require(treasury_ != address(0), "Treasury address is zero");
+        require(initialOwner != treasury_, "Owner and treasury cannot be the same");
         treasury = treasury_;
         uint256 supply = 1_000_000_000 * 10 ** decimals();
         _mint(treasury_, supply);
@@ -36,6 +43,7 @@ contract ZIMXToken is ERC20, ERC20Burnable, Pausable, Ownable {
     /**
      * @notice Returns token decimals.
      * @dev ZIMX uses 6 decimals to align with ecosystem standards.
+     * @return The number of decimals used by the token.
      */
     function decimals() public pure override returns (uint8) {
         return 6;
@@ -45,6 +53,7 @@ contract ZIMXToken is ERC20, ERC20Burnable, Pausable, Ownable {
      * @notice Updates the treasury wallet.
      * @dev Only callable by the contract owner.
      * @param newTreasury Address of the new treasury wallet.
+     * Emits a {TreasuryUpdated} event.
      */
     function updateTreasury(address newTreasury) external onlyOwner {
         require(newTreasury != address(0), "Treasury address is zero");
@@ -54,7 +63,7 @@ contract ZIMXToken is ERC20, ERC20Burnable, Pausable, Ownable {
 
     /**
      * @notice Pauses all token transfers.
-     * @dev Only callable by the contract owner.
+     * @dev Only callable by the contract owner. Emits a {Paused} event.
      */
     function pause() external onlyOwner {
         _pause();
@@ -62,7 +71,7 @@ contract ZIMXToken is ERC20, ERC20Burnable, Pausable, Ownable {
 
     /**
      * @notice Unpauses token transfers.
-     * @dev Only callable by the contract owner.
+     * @dev Only callable by the contract owner. Emits an {Unpaused} event.
      */
     function unpause() external onlyOwner {
         _unpause();
@@ -70,6 +79,7 @@ contract ZIMXToken is ERC20, ERC20Burnable, Pausable, Ownable {
 
     /**
      * @dev Overrides the underlying ERC20 transfer to honor the pause state.
+     * Transfers are blocked while the contract is paused.
      * @inheritdoc ERC20
      */
     function _transfer(
