@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
-import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Pausable.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
@@ -11,7 +11,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
  * @title ZIMXToken
  * @notice ZIMX utility token with fixed supply and emergency pause.
  */
-contract ZIMXToken is ERC20, ERC20Burnable, ERC20Pausable, ERC20Permit, Ownable {
+contract ZIMXToken is ERC20, ERC20Burnable, Pausable, ERC20Permit, Ownable {
     /// @notice Address receiving the initial token supply and holding treasury funds.
     address public treasury;
 
@@ -80,6 +80,14 @@ contract ZIMXToken is ERC20, ERC20Burnable, ERC20Pausable, ERC20Permit, Ownable 
      */
     function unpause() external onlyOwner {
         _unpause();
+    }
+
+    function _update(address from, address to, uint256 value)
+        internal
+        override(ERC20)
+        whenNotPaused
+    {
+        super._update(from, to, value);
     }
 
 }
