@@ -18,10 +18,15 @@ contract ZIMXToken is ERC20, ERC20Burnable, Pausable, Ownable {
     event TreasuryUpdated(address indexed newTreasury);
 
     /**
-     * @notice Deploys the ZIMX token and mints the full supply to the treasury.
+     * @notice Deploys the ZIMX token, assigns the initial owner, and mints the full supply to the treasury.
+     * @param initialOwner Address that will be granted ownership of the contract.
      * @param treasury_ Address of the treasury wallet that receives the full token supply.
      */
-    constructor(address treasury_) ERC20("ZIMX Token", "ZIMX") {
+    constructor(address initialOwner, address treasury_)
+        ERC20("ZIMX Token", "ZIMX")
+        Ownable(initialOwner)
+    {
+        require(initialOwner != address(0), "Owner address is zero");
         require(treasury_ != address(0), "Treasury address is zero");
         treasury = treasury_;
         uint256 supply = 1_000_000_000 * 10 ** decimals();
