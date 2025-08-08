@@ -1,29 +1,34 @@
-# ZIMX Token – Official Smart Contract Repository
+# ZIMX Token Deployment Package
 
-**Owner:** Blackmass Enterprises Ltd (Company No. 16124799, United Kingdom)  
-**Project Lead:** Munashe ‘Emperor Roy’ Mupoto (@roy_bme)  
-**Trademarks:**  
-- ZIMX™ – UK00004234707 (Classes 36, 38, 42)  
-- ZiGX™ – UK00004244166 (Classes 36, 42)  
+This repository contains the finalized, production-ready smart contract for the ZIMX token, developed by Blackmass Enterprises Ltd. This contract underpins the ZimX Finance ecosystem, designed to enable secure, transparent financial inclusion and remittances aligned with Zimbabwe’s Vision 2030 goals.
 
-## Overview
-ZIMX is a stable, trust-driven token designed to integrate directly into the ZimX Finance ecosystem.  
-The token aligns with Zimbabwe’s **Vision 2030** goals, bridging diaspora remittances with local financial inclusion.  
+## Purpose
 
-## Contract Details
-- **Contract Name:** ZIMX Token
-- **Ticker:** ZIMX
-- **Standard:** ERC-20 (OpenZeppelin)
-- **Peg:** 1:1 with ZiGX/USDC-based reserve model
-- **Decimals:** 6 (aligning with ZiGX standard)
-- **Owner Address:** 0xA66118aF132483270cB67819C0375CAdb4F31B33
+ZIMX is a utility and governance token within the ZimX Finance ecosystem. It facilitates decentralized governance, incentivizes community participation, and supports the broader ecosystem functions beyond stable value transfer.
 
-## Development Setup
-```bash
-npm install
-npx hardhat compile
-```
+## Features
 
-## License
-This repository is private and all rights are reserved by Blackmass Enterprises Ltd.  
-No reproduction, modification, or redistribution without explicit permission.
+- Phased minting with supply caps and locking  
+- Treasury wallet and vesting contract address management  
+- 6 decimals to match ecosystem standards  
+- Ownership controls for secure administration
+
+## Files
+
+- `ZIMXToken.sol`: The verified ZIMX smart contract including governance logic and phased minting controls.  
+- `README.md`: This documentation.
+
+## Deployment Notes
+
+- Use Solidity compiler version 0.8.19 or compatible.  
+- Verify the contract source on blockchain explorers for transparency.  
+- Set up governance parameters, phases, and vesting contracts after deployment.  
+- Ownership and treasury wallets should be managed with multisig for enhanced security.
+
+## Support & Issues
+
+Please report any issues or questions by opening an issue in this repository.
+
+---
+
+© Blackmass Enterprises Ltd. All rights reserved.
