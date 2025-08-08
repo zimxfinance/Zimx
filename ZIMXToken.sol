@@ -69,13 +69,14 @@ contract ZIMXToken is ERC20, ERC20Burnable, Pausable, Ownable {
     }
 
     /**
+     * @dev Overrides the underlying ERC20 transfer to honor the pause state.
      * @inheritdoc ERC20
      */
-    function _beforeTokenTransfer(
+    function _transfer(
         address from,
         address to,
         uint256 amount
     ) internal override whenNotPaused {
-        super._beforeTokenTransfer(from, to, amount);
+        super._transfer(from, to, amount);
     }
 }
