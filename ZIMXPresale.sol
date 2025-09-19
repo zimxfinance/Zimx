@@ -43,6 +43,13 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
     address public reserveVault;
     /// @notice Destination receiving the operations share of proceeds.
     address public opsTreasury;
+    /// @notice Timestamp of the last vault update used to enforce a delay before finalization.
+    uint64 public vaultsLastSet;
+
+    /// @notice Minimum expected total proceeds (18 decimals) required before finalization.
+    uint256 public expectedTotal;
+    /// @notice Allowed tolerance around the expected total expressed in basis points.
+    uint16 public toleranceBps;
 
     /// @notice Mapping of buyer to amount of tokens purchased.
     mapping(address => uint256) public contributionOf;
@@ -96,6 +103,10 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
     event KycStatusUpdated(address indexed participant, bool passed);
     /// @notice Emitted when unsold token handling is configured.
     event UnsoldConfigurationUpdated(bool burnUnsold, address indexed recipient);
+    /// @notice Emitted when the minimum expected proceeds configuration is updated.
+    event ExpectedTotalsUpdated(uint256 expectedTotal, uint16 toleranceBps);
+    /// @notice Emitted when remaining dust is swept post-finalization.
+    event DustSwept(uint256 stableAmount, uint256 ethAmount);
 
     enum PromiseStatus {
         Pending,
@@ -225,12 +236,17 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
         require(!finalized, "SALE_FINALIZED");
         require(block.timestamp > endTime, "SALE_NOT_ENDED");
         require(reserveVault != address(0) && opsTreasury != address(0), "VAULTS_NOT_SET");
-
-        finalized = true;
-        emit SaleClosed();
+        require(block.timestamp >= vaultsLastSet + 3600, "VAULT_DELAY");
 
         uint256 stableBalance = stablecoin.balanceOf(address(this));
         uint256 ethBalance = address(this).balance;
+
+        uint256 normalizedTotal = _normalizeStable(stableBalance) + ethBalance;
+        uint256 minExpected = (expectedTotal * (10_000 - toleranceBps)) / 10_000;
+        require(normalizedTotal >= minExpected, "TOTAL_BELOW_EXPECTATION");
+
+        finalized = true;
+        emit SaleClosed();
 
         uint256 reserveStable = (stableBalance * reserveBps) / 10_000;
         uint256 opsStable = stableBalance - reserveStable;
@@ -267,6 +283,19 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
     }
 
     /**
+     * @notice Updates the minimum expected proceeds configuration (pre-finalization only).
+     * @param newExpectedTotal Minimum expected proceeds in 18-decimal precision.
+     * @param newToleranceBps Allowed tolerance in basis points (0 - 10,000).
+     */
+    function setExpectedTotals(uint256 newExpectedTotal, uint16 newToleranceBps) external onlyGovernance {
+        require(!finalized, "SALE_FINALIZED");
+        require(newToleranceBps <= 10_000, "BPS_OOB");
+        expectedTotal = newExpectedTotal;
+        toleranceBps = newToleranceBps;
+        emit ExpectedTotalsUpdated(newExpectedTotal, newToleranceBps);
+    }
+
+    /**
      * @notice Updates the proceeds vault addresses (pre-finalization only).
      * @param reserve Address of the reserve vault.
      * @param ops Address of the operations treasury.
@@ -274,6 +303,28 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
     function setVaults(address reserve, address ops) external onlyGovernance {
         require(!finalized, "SALE_FINALIZED");
         _setVaults(reserve, ops);
+    }
+
+    /**
+     * @notice Sweeps any leftover dust stablecoins or ETH to the operations treasury after finalization.
+     */
+    function sweepDust() external onlyGovernance nonReentrant {
+        require(finalized, "SALE_NOT_FINALIZED");
+        require(opsTreasury != address(0), "OPS_ZERO");
+
+        uint256 stableDust = stablecoin.balanceOf(address(this));
+        uint256 ethDust = address(this).balance;
+        require(stableDust > 0 || ethDust > 0, "NO_DUST");
+
+        if (stableDust > 0) {
+            stablecoin.safeTransfer(opsTreasury, stableDust);
+        }
+        if (ethDust > 0) {
+            (bool sentOps, ) = opsTreasury.call{value: ethDust}("");
+            require(sentOps, "OPS_ETH_FAIL");
+        }
+
+        emit DustSwept(stableDust, ethDust);
     }
 
     /**
@@ -343,6 +394,8 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
         require(!finalized, "SALE_FINALIZED");
         if (burnUnsold) {
             require(recipient == address(0), "RECIPIENT_IGNORED");
+        } else {
+            require(recipient != address(0), "RECIPIENT_ZERO");
         }
         burnUnsoldTokens = burnUnsold;
         unsoldTokenRecipient = recipient;
@@ -461,11 +514,25 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
         require(reserve != address(0) && ops != address(0), "VAULT_ZERO");
         reserveVault = reserve;
         opsTreasury = ops;
+        vaultsLastSet = uint64(block.timestamp);
         emit VaultsUpdated(reserve, ops);
+    }
+    
+    function _normalizeStable(uint256 amount) internal view returns (uint256) {
+        if (stableDecimals == 18) {
+            return amount;
+        } else if (stableDecimals < 18) {
+            return amount * (10 ** (18 - stableDecimals));
+        } else {
+            return amount / (10 ** (stableDecimals - 18));
+        }
     }
 
     receive() external payable {
-        revert("DIRECT_ETH_DISABLED");
+        revert("DIRECT_SEND_NOT_ALLOWED");
     }
 
+    fallback() external payable {
+        revert("DIRECT_SEND_NOT_ALLOWED");
+    }
 }

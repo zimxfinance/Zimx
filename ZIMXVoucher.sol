@@ -23,6 +23,8 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
     address public pendingGovernance;
     /// @notice Escrow wallet supplying tokens upon redemption.
     address public escrow;
+    /// @notice Remaining token amount permitted to be pulled from the escrow wallet.
+    uint256 public escrowRedemptionAllowance;
     /// @notice Counter for voucher token IDs.
     Counters.Counter private _ids;
 
@@ -65,6 +67,8 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
     event OnChainPromiseRecorded(uint256 indexed promiseId, string details);
     /// @notice Emitted when a promise status is updated.
     event OnChainPromiseStatusUpdated(uint256 indexed promiseId, PromiseStatus status);
+    /// @notice Emitted when the redemption allowance sourced from escrow is adjusted.
+    event EscrowRedemptionAllowanceSet(uint256 amount);
 
     modifier onlyGovernance() {
         require(msg.sender == governance, "NOT_GOVERNANCE");
@@ -130,6 +134,15 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
     }
 
     /**
+     * @notice Sets the amount of tokens that can be redeemed from the escrow wallet.
+     * @param amount Amount of tokens approved for redemption.
+     */
+    function setEscrowRedemptionAllowance(uint256 amount) external onlyGovernance {
+        escrowRedemptionAllowance = amount;
+        emit EscrowRedemptionAllowanceSet(amount);
+    }
+
+    /**
      * @notice Mints a voucher locking tokens for a beneficiary.
      * @param to Recipient of the voucher NFT.
      * @param amount Amount of tokens represented by the voucher.
@@ -158,11 +171,14 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
         require(!info.redeemed, "ALREADY_REDEEMED");
         require(block.timestamp >= info.unlockTimestamp, "VOUCHER_LOCKED");
 
+        uint256 amount = info.amount;
+        require(escrowRedemptionAllowance >= amount, "ALLOWANCE_EXCEEDED");
         info.redeemed = true;
+        escrowRedemptionAllowance -= amount;
         _burn(tokenId);
-        token.safeTransferFrom(escrow, msg.sender, info.amount);
+        token.safeTransferFrom(escrow, msg.sender, amount);
 
-        emit VoucherRedeemed(tokenId, msg.sender, info.amount);
+        emit VoucherRedeemed(tokenId, msg.sender, amount);
     }
 
     /**

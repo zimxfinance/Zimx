@@ -187,28 +187,16 @@ contract ZIMXVesting is ReentrancyGuard {
      * @return Amount of tokens currently releasable.
      */
     function releasable(address beneficiary) public view returns (uint256) {
-        VestingSchedule memory schedule = schedules[beneficiary];
-        if (schedule.totalAmount == 0 || schedule.revoked) {
-            return 0;
-        }
-        if (block.timestamp < start + cliffDuration) {
-            return 0;
-        }
-        uint256 elapsed = block.timestamp > start ? block.timestamp - start : 0;
-        if (elapsed >= duration) {
-            return schedule.totalAmount - schedule.released;
-        }
-        uint256 vested = (schedule.totalAmount * elapsed) / duration;
-        return vested - schedule.released;
+        return _releasableAmount(schedules[beneficiary]);
     }
 
     /**
      * @notice Releases vested tokens for the caller.
      */
     function release() external nonReentrant {
-        uint256 amount = releasable(msg.sender);
-        require(amount > 0, "NOTHING_TO_RELEASE");
         VestingSchedule storage schedule = schedules[msg.sender];
+        uint256 amount = _releasableAmount(schedule);
+        require(amount > 0, "NOTHING_TO_RELEASE");
         schedule.released += amount;
         require(totalLocked >= amount, "LOCKED_UNDERFLOW");
         totalLocked -= amount;
@@ -308,5 +296,20 @@ contract ZIMXVesting is ReentrancyGuard {
             return schedule.totalAmount;
         }
         return (schedule.totalAmount * elapsed) / duration;
+    }
+
+    function _releasableAmount(VestingSchedule storage schedule) internal view returns (uint256) {
+        if (schedule.totalAmount == 0 || schedule.revoked) {
+            return 0;
+        }
+        if (block.timestamp < start + cliffDuration) {
+            return 0;
+        }
+        uint256 elapsed = block.timestamp > start ? block.timestamp - start : 0;
+        if (elapsed >= duration) {
+            return schedule.totalAmount - schedule.released;
+        }
+        uint256 vested = (schedule.totalAmount * elapsed) / duration;
+        return vested - schedule.released;
     }
 }
