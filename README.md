@@ -1,6 +1,6 @@
 # ZIMX Contracts
 
-Smart contracts for the **ZIMX ecosystem**, deployed on Base L2.  
+Smart contracts for the **ZIMX ecosystem**, to be deployed on Base L2.  
 ZIMX is the fixed-supply governance and utility token powering presale, vesting and vouchers.
 
 🌐 [zimx.io](https://zimx.io)
