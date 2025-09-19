@@ -15,17 +15,41 @@ contract ZIMXTokenFINALDEPLOY is ERC20, ERC20Burnable, Pausable, ERC20Permit {
     address public governance;
     /// @notice Address holding the treasury allocation minted at deployment.
     address public treasury;
+    /// @notice Address nominated to assume governance pending acceptance.
+    address public pendingGovernance;
     /// @notice Indicates whether the treasury destination can no longer be updated.
     bool public treasurySealed;
 
     /// @notice Emitted when governance control is transferred.
     event GovernanceTransferred(address indexed previousGovernance, address indexed newGovernance);
+    /// @notice Emitted when governance transfer is initiated and must be accepted.
+    event GovernanceTransferStarted(address indexed currentGovernance, address indexed pendingGovernance);
+    /// @notice Emitted when a pending governance transfer is cancelled.
+    event GovernanceTransferCancelled(address indexed cancelledGovernance);
     /// @notice Emitted when the treasury wallet is updated.
     event TreasuryUpdated(address indexed newTreasury);
     /// @notice Emitted when the treasury wallet becomes immutable.
     event TreasurySealed();
     /// @notice Emitted when an allocation is recorded and distributed.
     event AllocationSet(string indexed name, uint256 amount, address indexed destination);
+    enum PromiseStatus {
+        Pending,
+        Kept,
+        Broken
+    }
+
+    struct OnChainPromise {
+        string details;
+        uint64 timestamp;
+        PromiseStatus status;
+    }
+
+    /// @notice Emitted when a new on-chain promise is recorded.
+    event OnChainPromiseRecorded(uint256 indexed promiseId, string details);
+    /// @notice Emitted when the status of a promise changes.
+    event OnChainPromiseStatusUpdated(uint256 indexed promiseId, PromiseStatus status);
+
+    OnChainPromise[] private _promises;
 
     modifier onlyGovernance() {
         require(msg.sender == governance, "NOT_GOVERNANCE");
@@ -70,8 +94,32 @@ contract ZIMXTokenFINALDEPLOY is ERC20, ERC20Burnable, Pausable, ERC20Permit {
      */
     function transferGovernance(address newGovernance) external onlyGovernance {
         require(newGovernance != address(0), "GOV_ZERO");
-        emit GovernanceTransferred(governance, newGovernance);
-        governance = newGovernance;
+        require(newGovernance != governance, "ALREADY_GOV");
+        require(pendingGovernance == address(0), "PENDING_GOV");
+        pendingGovernance = newGovernance;
+        emit GovernanceTransferStarted(governance, newGovernance);
+    }
+
+    /**
+     * @notice Cancels a pending governance transfer.
+     */
+    function cancelGovernanceTransfer() external onlyGovernance {
+        address pending = pendingGovernance;
+        require(pending != address(0), "NO_PENDING_GOV");
+        pendingGovernance = address(0);
+        emit GovernanceTransferCancelled(pending);
+    }
+
+    /**
+     * @notice Accepts a pending governance transfer.
+     */
+    function acceptGovernance() external {
+        address pending = pendingGovernance;
+        require(pending != address(0), "NO_PENDING_GOV");
+        require(msg.sender == pending, "NOT_PENDING_GOV");
+        pendingGovernance = address(0);
+        emit GovernanceTransferred(governance, pending);
+        governance = pending;
     }
 
     /**
@@ -126,5 +174,55 @@ contract ZIMXTokenFINALDEPLOY is ERC20, ERC20Burnable, Pausable, ERC20Permit {
 
     function _update(address from, address to, uint256 value) internal override whenNotPaused {
         super._update(from, to, value);
+    }
+
+    /**
+     * @notice Records a new on-chain promise for community transparency.
+     * @param details Human-readable description of the promise.
+     * @return promiseId Identifier of the stored promise.
+     */
+    function recordOnChainPromise(string calldata details) external onlyGovernance returns (uint256 promiseId) {
+        require(bytes(details).length > 0, "PROMISE_EMPTY");
+        promiseId = _promises.length;
+        _promises.push(OnChainPromise({details: details, timestamp: uint64(block.timestamp), status: PromiseStatus.Pending}));
+        emit OnChainPromiseRecorded(promiseId, details);
+    }
+
+    /**
+     * @notice Updates the status of a recorded promise.
+     * @param promiseId Identifier of the promise to update.
+     * @param status New status value for the promise.
+     */
+    function updateOnChainPromiseStatus(uint256 promiseId, PromiseStatus status) external onlyGovernance {
+        require(promiseId < _promises.length, "PROMISE_OOB");
+        OnChainPromise storage promise = _promises[promiseId];
+        require(promise.status != status, "STATUS_UNCHANGED");
+        promise.status = status;
+        promise.timestamp = uint64(block.timestamp);
+        emit OnChainPromiseStatusUpdated(promiseId, status);
+    }
+
+    /**
+     * @notice Returns information about a stored on-chain promise.
+     * @param promiseId Identifier of the promise to retrieve.
+     * @return details Promise description.
+     * @return timestamp Timestamp of the most recent status update.
+     * @return status Current status of the promise.
+     */
+    function getOnChainPromise(uint256 promiseId)
+        external
+        view
+        returns (string memory details, uint64 timestamp, PromiseStatus status)
+    {
+        require(promiseId < _promises.length, "PROMISE_OOB");
+        OnChainPromise storage promise = _promises[promiseId];
+        return (promise.details, promise.timestamp, promise.status);
+    }
+
+    /**
+     * @notice Returns the total number of promises recorded on-chain.
+     */
+    function onChainPromiseCount() external view returns (uint256) {
+        return _promises.length;
     }
 }

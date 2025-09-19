@@ -5,12 +5,13 @@ import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 /**
  * @title ZIMXVoucher
  * @notice ERC721 voucher representing locked ZIMX tokens with unlock control and governance management.
  */
-contract ZIMXVoucher is ERC721 {
+contract ZIMXVoucher is ERC721, ReentrancyGuard {
     using Counters for Counters.Counter;
     using SafeERC20 for IERC20;
 
@@ -18,6 +19,8 @@ contract ZIMXVoucher is ERC721 {
     IERC20 public immutable token;
     /// @notice Governance address managing voucher issuance.
     address public governance;
+    /// @notice Address nominated to assume governance pending acceptance.
+    address public pendingGovernance;
     /// @notice Escrow wallet supplying tokens upon redemption.
     address public escrow;
     /// @notice Counter for voucher token IDs.
@@ -32,6 +35,20 @@ contract ZIMXVoucher is ERC721 {
     /// @notice Mapping from voucher ID to its information.
     mapping(uint256 => VoucherInfo) public vouchers;
 
+    enum PromiseStatus {
+        Pending,
+        Kept,
+        Broken
+    }
+
+    struct OnChainPromise {
+        string details;
+        uint64 timestamp;
+        PromiseStatus status;
+    }
+
+    OnChainPromise[] private _promises;
+
     /// @notice Emitted when governance is transferred.
     event GovernanceTransferred(address indexed previousGovernance, address indexed newGovernance);
     /// @notice Emitted when a voucher is minted.
@@ -40,6 +57,14 @@ contract ZIMXVoucher is ERC721 {
     event VoucherRedeemed(uint256 indexed tokenId, address indexed to, uint256 amount);
     /// @notice Emitted when the escrow wallet is updated.
     event EscrowUpdated(address indexed newEscrow);
+    /// @notice Emitted when governance transfer is initiated.
+    event GovernanceTransferStarted(address indexed currentGovernance, address indexed pendingGovernance);
+    /// @notice Emitted when a pending governance transfer is cancelled.
+    event GovernanceTransferCancelled(address indexed cancelledGovernance);
+    /// @notice Emitted when an on-chain promise is recorded.
+    event OnChainPromiseRecorded(uint256 indexed promiseId, string details);
+    /// @notice Emitted when a promise status is updated.
+    event OnChainPromiseStatusUpdated(uint256 indexed promiseId, PromiseStatus status);
 
     modifier onlyGovernance() {
         require(msg.sender == governance, "NOT_GOVERNANCE");
@@ -66,8 +91,32 @@ contract ZIMXVoucher is ERC721 {
      */
     function transferGovernance(address newGovernance) external onlyGovernance {
         require(newGovernance != address(0), "GOV_ZERO");
-        emit GovernanceTransferred(governance, newGovernance);
-        governance = newGovernance;
+        require(newGovernance != governance, "ALREADY_GOV");
+        require(pendingGovernance == address(0), "PENDING_GOV");
+        pendingGovernance = newGovernance;
+        emit GovernanceTransferStarted(governance, newGovernance);
+    }
+
+    /**
+     * @notice Cancels a pending governance transfer.
+     */
+    function cancelGovernanceTransfer() external onlyGovernance {
+        address pending = pendingGovernance;
+        require(pending != address(0), "NO_PENDING_GOV");
+        pendingGovernance = address(0);
+        emit GovernanceTransferCancelled(pending);
+    }
+
+    /**
+     * @notice Accepts a pending governance transfer.
+     */
+    function acceptGovernance() external {
+        address pending = pendingGovernance;
+        require(pending != address(0), "NO_PENDING_GOV");
+        require(msg.sender == pending, "NOT_PENDING_GOV");
+        pendingGovernance = address(0);
+        emit GovernanceTransferred(governance, pending);
+        governance = pending;
     }
 
     /**
@@ -103,7 +152,7 @@ contract ZIMXVoucher is ERC721 {
      * @notice Redeems a voucher for its underlying tokens.
      * @param tokenId ID of the voucher to redeem.
      */
-    function redeem(uint256 tokenId) external {
+    function redeem(uint256 tokenId) external nonReentrant {
         require(ownerOf(tokenId) == msg.sender, "NOT_OWNER");
         VoucherInfo storage info = vouchers[tokenId];
         require(!info.redeemed, "ALREADY_REDEEMED");
@@ -114,5 +163,55 @@ contract ZIMXVoucher is ERC721 {
         token.safeTransferFrom(escrow, msg.sender, info.amount);
 
         emit VoucherRedeemed(tokenId, msg.sender, info.amount);
+    }
+
+    /**
+     * @notice Records a new on-chain promise for the voucher program.
+     * @param details Description of the commitment being made.
+     * @return promiseId Identifier assigned to the promise.
+     */
+    function recordOnChainPromise(string calldata details) external onlyGovernance returns (uint256 promiseId) {
+        require(bytes(details).length > 0, "PROMISE_EMPTY");
+        promiseId = _promises.length;
+        _promises.push(OnChainPromise({details: details, timestamp: uint64(block.timestamp), status: PromiseStatus.Pending}));
+        emit OnChainPromiseRecorded(promiseId, details);
+    }
+
+    /**
+     * @notice Updates the status of a recorded promise.
+     * @param promiseId Identifier of the promise to update.
+     * @param status New status to assign.
+     */
+    function updateOnChainPromiseStatus(uint256 promiseId, PromiseStatus status) external onlyGovernance {
+        require(promiseId < _promises.length, "PROMISE_OOB");
+        OnChainPromise storage promise = _promises[promiseId];
+        require(promise.status != status, "STATUS_UNCHANGED");
+        promise.status = status;
+        promise.timestamp = uint64(block.timestamp);
+        emit OnChainPromiseStatusUpdated(promiseId, status);
+    }
+
+    /**
+     * @notice Retrieves details for a stored promise.
+     * @param promiseId Identifier of the promise.
+     * @return details Promise description.
+     * @return timestamp Timestamp of the most recent update.
+     * @return status Current status of the promise.
+     */
+    function getOnChainPromise(uint256 promiseId)
+        external
+        view
+        returns (string memory details, uint64 timestamp, PromiseStatus status)
+    {
+        require(promiseId < _promises.length, "PROMISE_OOB");
+        OnChainPromise storage promise = _promises[promiseId];
+        return (promise.details, promise.timestamp, promise.status);
+    }
+
+    /**
+     * @notice Returns the number of promises recorded on-chain.
+     */
+    function onChainPromiseCount() external view returns (uint256) {
+        return _promises.length;
     }
 }
