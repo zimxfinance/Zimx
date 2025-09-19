@@ -1,12 +1,23 @@
-# ZIMX Token Ecosystem
+# ZIMX Contracts
 
-This repository contains the smart contracts powering the ZIMX token and its surrounding ecosystem.
+Smart contracts for the **ZIMX ecosystem**, deployed on Base L2.  
+ZIMX is the fixed-supply governance and utility token powering presale, vesting and vouchers.
+
+🌐 [zimx.io](https://zimx.io)
+
+---
 
 ## Contracts
+- **ZIMXTokenFINALDEPLOY.sol** – 1B supply governance/utility token
+- **ZIMXPresale.sol** – capped presale with hard cap, buyer limits, reserve split
+- **ZIMXVesting.sol** – linear vesting with cliffs
+- **ZIMXVoucher.sol** – voucher issuance and redemption
 
-- `ZIMXToken.sol` – ERC20 token with a fixed supply of 1,000,000,000 tokens (6 decimals). The entire supply is minted to a configurable treasury wallet on deployment. Transfers can be paused by the owner and holders may burn their tokens.
-- `ZIMXPresale.sol` – Handles token sales in exchange for ETH or an ERC20 stablecoin. All funds are forwarded to the treasury and tokens are distributed directly from the treasury wallet. Supports configurable rates, start/end times, pausing and finalisation.
-- `ZIMXVesting.sol` – Allows the owner to create linear vesting schedules for beneficiaries. Tokens are released linearly after a cliff and can be claimed by beneficiaries.
-- `ZIMXVoucher.sol` – ERC721 NFTs representing locked ZIMX tokens. Vouchers can be transferred and redeemed by their owners to claim the underlying tokens.
+---
 
-All contracts use OpenZeppelin libraries and include NatSpec documentation and events for important state changes.
+## Features
+- Immutable supply (1,000,000,000 ZIMX)
+- Governance functions locked until 2027
+- Presale capped at 50M ZIMX with enforced reserve split
+- Transparent events for allocations, purchases, vesting and vouchers
+- Ownership through multisig + timelock
