@@ -93,11 +93,15 @@ contract ZIMXTokenFINALDEPLOY is ERC20, ERC20Burnable, Pausable, ERC20Permit {
      * @param newGovernance Address of the new governance multisig.
      */
     function transferGovernance(address newGovernance) external onlyGovernance {
-        require(newGovernance != address(0), "GOV_ZERO");
-        require(newGovernance != governance, "ALREADY_GOV");
-        require(pendingGovernance == address(0), "PENDING_GOV");
-        pendingGovernance = newGovernance;
-        emit GovernanceTransferStarted(governance, newGovernance);
+        _initiateGovernanceTransfer(newGovernance);
+    }
+
+    /**
+     * @notice Initiates governance transfer using the ownership naming convention for compatibility.
+     * @param newOwner Address of the contract set to receive governance powers.
+     */
+    function transferOwnership(address newOwner) external onlyGovernance {
+        _initiateGovernanceTransfer(newOwner);
     }
 
     /**
@@ -224,5 +228,14 @@ contract ZIMXTokenFINALDEPLOY is ERC20, ERC20Burnable, Pausable, ERC20Permit {
      */
     function onChainPromiseCount() external view returns (uint256) {
         return _promises.length;
+    }
+
+    function _initiateGovernanceTransfer(address newGovernance) internal {
+        require(newGovernance != address(0), "GOV_ZERO");
+        require(newGovernance.code.length > 0, "OWNER_NOT_CONTRACT");
+        require(newGovernance != governance, "ALREADY_GOV");
+        require(pendingGovernance == address(0), "PENDING_GOV");
+        pendingGovernance = newGovernance;
+        emit GovernanceTransferStarted(governance, newGovernance);
     }
 }
