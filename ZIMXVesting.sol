@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -11,6 +11,9 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
  */
 contract ZIMXVesting is ReentrancyGuard {
     using SafeERC20 for IERC20;
+
+    /// @notice Timestamp when governance managed operations become available (2027-01-01 UTC).
+    uint256 public constant GOVERNANCE_ENABLE_TS = 1_798_761_600;
 
     /// @notice Token being vested.
     IERC20 public immutable token;
@@ -30,14 +33,14 @@ contract ZIMXVesting is ReentrancyGuard {
     /// @notice Aggregate amount of tokens still locked across all schedules.
     uint256 public totalLocked;
 
-    struct VestingSchedule {
+    struct StoredSchedule {
         uint256 totalAmount;
         uint256 released;
         bool revoked;
     }
 
     /// @notice Mapping of beneficiary address to their vesting schedule.
-    mapping(address => VestingSchedule) public schedules;
+    mapping(address => StoredSchedule) public schedules;
 
     enum PromiseStatus {
         Pending,
@@ -71,9 +74,39 @@ contract ZIMXVesting is ReentrancyGuard {
     event OnChainPromiseRecorded(uint256 indexed promiseId, string details);
     /// @notice Emitted when a promise status is updated.
     event OnChainPromiseStatusUpdated(uint256 indexed promiseId, PromiseStatus status);
+    /// @notice Emitted when a beneficiary is added to the vesting schedules.
+    event BeneficiaryAdded(
+        address indexed beneficiary,
+        uint256 amount,
+        uint64 start,
+        uint64 cliff,
+        uint64 duration,
+        bool revocable
+    );
+    /// @notice Emitted when a vesting schedule is revoked.
+    event BeneficiaryRevoked(address indexed beneficiary, uint256 refunded, uint256 vestedPaidOut);
+    /// @notice Emitted when a beneficiary claims vested tokens.
+    event Claimed(address indexed beneficiary, uint256 amount, uint256 timestamp);
+    /// @notice Emitted when vesting schedule parameters are updated.
+    event ScheduleUpdated(address indexed beneficiary, uint64 start, uint64 cliff, uint64 duration);
+
+    struct VestingSchedule {
+        uint256 total;
+        uint256 claimed;
+        uint64 start;
+        uint64 cliff;
+        uint64 duration;
+        bool revocable;
+        bool revoked;
+    }
 
     modifier onlyGovernance() {
         require(msg.sender == governance, "NOT_GOVERNANCE");
+        _;
+    }
+
+    modifier after2027() {
+        require(block.timestamp >= GOVERNANCE_ENABLE_TS, "GOV_LOCKED_UNTIL_2027");
         _;
     }
 
@@ -110,7 +143,7 @@ contract ZIMXVesting is ReentrancyGuard {
      * @notice Transfers governance rights to a new address.
      * @param newGovernance Address of the new governance multisig.
      */
-    function transferGovernance(address newGovernance) external onlyGovernance {
+    function transferGovernance(address newGovernance) external onlyGovernance after2027 {
         require(newGovernance != address(0), "GOV_ZERO");
         require(newGovernance != governance, "ALREADY_GOV");
         require(pendingGovernance == address(0), "PENDING_GOV");
@@ -121,7 +154,7 @@ contract ZIMXVesting is ReentrancyGuard {
     /**
      * @notice Cancels a pending governance transfer.
      */
-    function cancelGovernanceTransfer() external onlyGovernance {
+    function cancelGovernanceTransfer() external onlyGovernance after2027 {
         address pending = pendingGovernance;
         require(pending != address(0), "NO_PENDING_GOV");
         pendingGovernance = address(0);
@@ -167,7 +200,7 @@ contract ZIMXVesting is ReentrancyGuard {
             require(beneficiary != address(0), "BENEFICIARY_ZERO");
             require(amount > 0, "AMOUNT_ZERO");
 
-            VestingSchedule storage schedule = schedules[beneficiary];
+            StoredSchedule storage schedule = schedules[beneficiary];
             require(schedule.totalAmount == 0 && schedule.released == 0, "SCHEDULE_EXISTS");
 
             schedule.totalAmount = amount;
@@ -176,6 +209,8 @@ contract ZIMXVesting is ReentrancyGuard {
             totalLocked += amount;
 
             emit VestingScheduleCreated(beneficiary, amount, start, cliffDuration, duration);
+            emit BeneficiaryAdded(beneficiary, amount, start, start + cliffDuration, duration, revocable);
+            emit ScheduleUpdated(beneficiary, start, start + cliffDuration, duration);
         }
 
         require(token.balanceOf(address(this)) >= totalLocked, "INSUFFICIENT_FUNDS");
@@ -191,10 +226,28 @@ contract ZIMXVesting is ReentrancyGuard {
     }
 
     /**
+     * @notice Returns the vesting schedule metadata for a beneficiary.
+     * @param beneficiary Address of the beneficiary to query.
+     */
+    function getSchedule(address beneficiary) external view returns (VestingSchedule memory) {
+        StoredSchedule storage schedule = schedules[beneficiary];
+        return
+            VestingSchedule({
+                total: schedule.totalAmount,
+                claimed: schedule.released,
+                start: start,
+                cliff: start + cliffDuration,
+                duration: duration,
+                revocable: revocable,
+                revoked: schedule.revoked
+            });
+    }
+
+    /**
      * @notice Releases vested tokens for the caller.
      */
     function release() external nonReentrant {
-        VestingSchedule storage schedule = schedules[msg.sender];
+        StoredSchedule storage schedule = schedules[msg.sender];
         uint256 amount = _releasableAmount(schedule);
         require(amount > 0, "NOTHING_TO_RELEASE");
         schedule.released += amount;
@@ -202,6 +255,7 @@ contract ZIMXVesting is ReentrancyGuard {
         totalLocked -= amount;
         token.safeTransfer(msg.sender, amount);
         emit TokensReleased(msg.sender, amount);
+        emit Claimed(msg.sender, amount, block.timestamp);
     }
 
     /**
@@ -210,7 +264,7 @@ contract ZIMXVesting is ReentrancyGuard {
      */
     function revoke(address beneficiary) external onlyGovernance nonReentrant {
         require(revocable, "NOT_REVOCABLE");
-        VestingSchedule storage schedule = schedules[beneficiary];
+        StoredSchedule storage schedule = schedules[beneficiary];
         require(schedule.totalAmount > 0, "NO_SCHEDULE");
         require(!schedule.revoked, "ALREADY_REVOKED");
 
@@ -223,6 +277,7 @@ contract ZIMXVesting is ReentrancyGuard {
         totalLocked -= unreleased;
 
         schedule.revoked = true;
+        uint256 previouslyReleased = schedule.released;
         schedule.totalAmount = vestedAmount;
         schedule.released = vestedAmount;
 
@@ -235,6 +290,8 @@ contract ZIMXVesting is ReentrancyGuard {
         }
 
         emit VestingRevoked(beneficiary, refund);
+        emit BeneficiaryRevoked(beneficiary, refund, previouslyReleased + releasableAmount);
+        emit ScheduleUpdated(beneficiary, start, start + cliffDuration, duration);
     }
 
     /**
@@ -242,7 +299,12 @@ contract ZIMXVesting is ReentrancyGuard {
      * @param details Description of the commitment made.
      * @return promiseId Identifier of the stored promise.
      */
-    function recordOnChainPromise(string calldata details) external onlyGovernance returns (uint256 promiseId) {
+    function recordOnChainPromise(string calldata details)
+        external
+        onlyGovernance
+        after2027
+        returns (uint256 promiseId)
+    {
         require(bytes(details).length > 0, "PROMISE_EMPTY");
         promiseId = _promises.length;
         _promises.push(OnChainPromise({details: details, timestamp: uint64(block.timestamp), status: PromiseStatus.Pending}));
@@ -254,7 +316,7 @@ contract ZIMXVesting is ReentrancyGuard {
      * @param promiseId Identifier of the promise to update.
      * @param status New status value.
      */
-    function updateOnChainPromiseStatus(uint256 promiseId, PromiseStatus status) external onlyGovernance {
+    function updateOnChainPromiseStatus(uint256 promiseId, PromiseStatus status) external onlyGovernance after2027 {
         require(promiseId < _promises.length, "PROMISE_OOB");
         OnChainPromise storage promise = _promises[promiseId];
         require(promise.status != status, "STATUS_UNCHANGED");
@@ -287,7 +349,7 @@ contract ZIMXVesting is ReentrancyGuard {
         return _promises.length;
     }
 
-    function _vestedAmount(VestingSchedule memory schedule) internal view returns (uint256) {
+    function _vestedAmount(StoredSchedule memory schedule) internal view returns (uint256) {
         if (block.timestamp < start + cliffDuration) {
             return 0;
         }
@@ -298,7 +360,7 @@ contract ZIMXVesting is ReentrancyGuard {
         return (schedule.totalAmount * elapsed) / duration;
     }
 
-    function _releasableAmount(VestingSchedule storage schedule) internal view returns (uint256) {
+    function _releasableAmount(StoredSchedule storage schedule) internal view returns (uint256) {
         if (schedule.totalAmount == 0 || schedule.revoked) {
             return 0;
         }

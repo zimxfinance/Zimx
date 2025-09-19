@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
@@ -14,6 +14,9 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 contract ZIMXVoucher is ERC721, ReentrancyGuard {
     using Counters for Counters.Counter;
     using SafeERC20 for IERC20;
+
+    /// @notice Timestamp when governance managed voucher features become available (2027-01-01 UTC).
+    uint256 public constant GOVERNANCE_ENABLE_TS = 1_798_761_600;
 
     /// @notice ZIMX token that vouchers can be redeemed for.
     IERC20 public immutable token;
@@ -69,9 +72,18 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
     event OnChainPromiseStatusUpdated(uint256 indexed promiseId, PromiseStatus status);
     /// @notice Emitted when the redemption allowance sourced from escrow is adjusted.
     event EscrowRedemptionAllowanceSet(uint256 amount);
+    /// @notice Emitted when a voucher is issued via governance.
+    event VoucherIssued(bytes32 indexed code, address indexed issuer, uint256 amount, address indexed intendedBeneficiary);
+    /// @notice Emitted when a voucher is redeemed.
+    event VoucherRedeemed(bytes32 indexed code, address indexed redeemer, uint256 amount);
 
     modifier onlyGovernance() {
         require(msg.sender == governance, "NOT_GOVERNANCE");
+        _;
+    }
+
+    modifier after2027() {
+        require(block.timestamp >= GOVERNANCE_ENABLE_TS, "GOV_LOCKED_UNTIL_2027");
         _;
     }
 
@@ -93,7 +105,7 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
      * @notice Transfers governance rights to a new address.
      * @param newGovernance Address of the new governance multisig.
      */
-    function transferGovernance(address newGovernance) external onlyGovernance {
+    function transferGovernance(address newGovernance) external onlyGovernance after2027 {
         require(newGovernance != address(0), "GOV_ZERO");
         require(newGovernance != governance, "ALREADY_GOV");
         require(pendingGovernance == address(0), "PENDING_GOV");
@@ -104,7 +116,7 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
     /**
      * @notice Cancels a pending governance transfer.
      */
-    function cancelGovernanceTransfer() external onlyGovernance {
+    function cancelGovernanceTransfer() external onlyGovernance after2027 {
         address pending = pendingGovernance;
         require(pending != address(0), "NO_PENDING_GOV");
         pendingGovernance = address(0);
@@ -127,7 +139,7 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
      * @notice Updates the escrow wallet supplying redemption liquidity.
      * @param newEscrow New escrow wallet address.
      */
-    function setEscrow(address newEscrow) external onlyGovernance {
+    function setEscrow(address newEscrow) external onlyGovernance after2027 {
         require(newEscrow != address(0), "ESCROW_ZERO");
         escrow = newEscrow;
         emit EscrowUpdated(newEscrow);
@@ -137,7 +149,7 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
      * @notice Sets the amount of tokens that can be redeemed from the escrow wallet.
      * @param amount Amount of tokens approved for redemption.
      */
-    function setEscrowRedemptionAllowance(uint256 amount) external onlyGovernance {
+    function setEscrowRedemptionAllowance(uint256 amount) external onlyGovernance after2027 {
         escrowRedemptionAllowance = amount;
         emit EscrowRedemptionAllowanceSet(amount);
     }
@@ -149,7 +161,12 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
      * @param unlockTimestamp Timestamp when redemption becomes available.
      * @return tokenId Identifier of the newly minted voucher.
      */
-    function mint(address to, uint256 amount, uint64 unlockTimestamp) external onlyGovernance returns (uint256 tokenId) {
+    function mint(address to, uint256 amount, uint64 unlockTimestamp)
+        external
+        onlyGovernance
+        after2027
+        returns (uint256 tokenId)
+    {
         require(to != address(0), "ZERO_ADDRESS");
         require(amount > 0, "AMOUNT_ZERO");
 
@@ -159,6 +176,7 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
         vouchers[tokenId] = VoucherInfo({amount: amount, unlockTimestamp: unlockTimestamp, redeemed: false});
         _safeMint(to, tokenId);
         emit VoucherMinted(tokenId, to, amount, unlockTimestamp);
+        emit VoucherIssued(bytes32(tokenId), msg.sender, amount, to);
     }
 
     /**
@@ -179,6 +197,7 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
         token.safeTransferFrom(escrow, msg.sender, amount);
 
         emit VoucherRedeemed(tokenId, msg.sender, amount);
+        emit VoucherRedeemed(bytes32(tokenId), msg.sender, amount);
     }
 
     /**
@@ -186,7 +205,12 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
      * @param details Description of the commitment being made.
      * @return promiseId Identifier assigned to the promise.
      */
-    function recordOnChainPromise(string calldata details) external onlyGovernance returns (uint256 promiseId) {
+    function recordOnChainPromise(string calldata details)
+        external
+        onlyGovernance
+        after2027
+        returns (uint256 promiseId)
+    {
         require(bytes(details).length > 0, "PROMISE_EMPTY");
         promiseId = _promises.length;
         _promises.push(OnChainPromise({details: details, timestamp: uint64(block.timestamp), status: PromiseStatus.Pending}));
@@ -198,7 +222,7 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
      * @param promiseId Identifier of the promise to update.
      * @param status New status to assign.
      */
-    function updateOnChainPromiseStatus(uint256 promiseId, PromiseStatus status) external onlyGovernance {
+    function updateOnChainPromiseStatus(uint256 promiseId, PromiseStatus status) external onlyGovernance after2027 {
         require(promiseId < _promises.length, "PROMISE_OOB");
         OnChainPromise storage promise = _promises[promiseId];
         require(promise.status != status, "STATUS_UNCHANGED");
