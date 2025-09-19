@@ -70,6 +70,8 @@ contract ZIMXVesting is ReentrancyGuard {
     event VestingRevoked(address indexed beneficiary, uint256 refundedAmount);
     /// @notice Emitted when tokens are transferred into the vesting contract.
     event TeamVestingFunded(uint256 totalAmount);
+    /// @notice Emitted when the vesting contract is funded with contextual metadata.
+    event VestingFunded(uint256 totalAmount, uint256 timestamp);
     /// @notice Emitted when an on-chain promise is recorded.
     event OnChainPromiseRecorded(uint256 indexed promiseId, string details);
     /// @notice Emitted when a promise status is updated.
@@ -183,6 +185,7 @@ contract ZIMXVesting is ReentrancyGuard {
         require(amount > 0, "AMOUNT_ZERO");
         token.safeTransferFrom(from, address(this), amount);
         emit TeamVestingFunded(amount);
+        emit VestingFunded(amount, block.timestamp);
     }
 
     /**

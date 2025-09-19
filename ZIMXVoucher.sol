@@ -74,6 +74,14 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
     event EscrowRedemptionAllowanceSet(uint256 amount);
     /// @notice Emitted when a voucher is issued via governance.
     event VoucherIssued(bytes32 indexed code, address indexed issuer, uint256 amount, address indexed intendedBeneficiary);
+    /// @notice Emitted when a voucher is issued with an unlock timestamp for analytics.
+    event VoucherIssued(
+        bytes32 indexed code,
+        address indexed issuer,
+        uint256 amount,
+        address indexed intendedBeneficiary,
+        uint64 unlockTimestamp
+    );
     /// @notice Emitted when a voucher is redeemed.
     event VoucherRedeemed(bytes32 indexed code, address indexed redeemer, uint256 amount);
 
@@ -177,6 +185,7 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
         _safeMint(to, tokenId);
         emit VoucherMinted(tokenId, to, amount, unlockTimestamp);
         emit VoucherIssued(bytes32(tokenId), msg.sender, amount, to);
+        emit VoucherIssued(bytes32(tokenId), msg.sender, amount, to, unlockTimestamp);
     }
 
     /**

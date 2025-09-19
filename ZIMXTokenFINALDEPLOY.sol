@@ -33,8 +33,14 @@ contract ZIMXTokenFINALDEPLOY is ERC20, ERC20Burnable, Pausable, ERC20Permit {
     event TreasuryUpdated(address indexed newTreasury);
     /// @notice Emitted when the treasury wallet becomes immutable.
     event TreasurySealed();
+    /// @notice Emitted when the treasury wallet becomes immutable along with contextual metadata.
+    event TreasurySealed(address indexed treasury, uint256 timestamp);
     /// @notice Emitted when an allocation is recorded and distributed.
     event AllocationSet(string indexed name, uint256 amount, address indexed destination);
+    /// @notice Emitted when an allocation is recorded with additional telemetry for analytics.
+    event AllocationSet(string bucket, address indexed to, uint256 amount, bytes32 ref);
+    /// @notice Emitted when governance restrictions are lifted and full controls become available.
+    event GovernanceActivated(uint256 timestamp);
     enum PromiseStatus {
         Pending,
         Kept,
@@ -152,6 +158,7 @@ contract ZIMXTokenFINALDEPLOY is ERC20, ERC20Burnable, Pausable, ERC20Permit {
         require(!treasurySealed, "TREASURY_SEALED");
         treasurySealed = true;
         emit TreasurySealed();
+        emit TreasurySealed(treasury, block.timestamp);
     }
 
     /**
@@ -169,6 +176,12 @@ contract ZIMXTokenFINALDEPLOY is ERC20, ERC20Burnable, Pausable, ERC20Permit {
         require(amount > 0, "AMOUNT_ZERO");
         _transfer(treasury, destination, amount);
         emit AllocationSet(allocationName, amount, destination);
+        emit AllocationSet(
+            allocationName,
+            destination,
+            amount,
+            keccak256(abi.encodePacked(block.number, destination, amount))
+        );
     }
 
     /**

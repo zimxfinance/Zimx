@@ -125,6 +125,16 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
     event ReserveInjection(address indexed asset, uint256 amount, address indexed toVault);
     /// @notice Emitted when the authorized KYC provider changes.
     event KycProviderUpdated(address indexed prev, address indexed next);
+    /// @notice Emitted when KYC status changes alongside a reference hash.
+    event KycStatusUpdated(address indexed account, bool passed, bytes32 ref);
+    /// @notice Emitted when the maximum allocation per buyer is updated.
+    event BuyerLimitUpdated(uint256 newMax);
+    /// @notice Emitted when pricing configuration is updated.
+    event PriceUpdated(uint256 unitPriceUsd6);
+    /// @notice Emitted when the presale reaches its hard cap.
+    event HardCapReached(uint256 totalSold);
+    /// @notice Emitted when the sale is closed with aggregate totals recorded.
+    event SaleClosed(uint256 totalSold, uint256 stableRaised, uint256 nativeRaised, uint256 timestamp);
 
     enum PromiseStatus {
         Pending,
@@ -222,8 +232,12 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
         token.safeTransfer(msg.sender, tokensToBuy);
 
         contributionOf[msg.sender] += tokensToBuy;
-        sold += tokensToBuy;
+        uint256 newSold = sold + tokensToBuy;
+        sold = newSold;
         stableRaised += amount;
+        if (newSold == HARD_CAP) {
+            emit HardCapReached(newSold);
+        }
 
         emit SalePurchased(msg.sender, tokensToBuy, amount, address(stablecoin));
         uint256 unitPriceUsd6 = tokensToBuy > 0 ? (_stableToUsd6(amount) * 1_000_000) / tokensToBuy : 0;
@@ -250,8 +264,12 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
         token.safeTransfer(msg.sender, tokensToBuy);
 
         contributionOf[msg.sender] += tokensToBuy;
-        sold += tokensToBuy;
+        uint256 newSold = sold + tokensToBuy;
+        sold = newSold;
         ethRaised += msg.value;
+        if (newSold == HARD_CAP) {
+            emit HardCapReached(newSold);
+        }
 
         emit SalePurchased(msg.sender, tokensToBuy, msg.value, address(0));
         uint256 unitPriceUsd6 = _configUnitPriceUsd6();
@@ -280,6 +298,7 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
 
         finalized = true;
         emit SaleClosed();
+        emit SaleClosed(sold, stableRaised, ethRaised, block.timestamp);
 
         uint256 reserveStable = (stableBalance * reserveBps) / 10_000;
         uint256 opsStable = stableBalance - reserveStable;
@@ -384,6 +403,7 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
         require(newBuyerMax > 0 && newBuyerMax <= HARD_CAP, "INVALID_MAX");
         buyerMax = newBuyerMax;
         emit BuyerMaxUpdated(newBuyerMax);
+        emit BuyerLimitUpdated(newBuyerMax);
     }
 
     /**
@@ -396,6 +416,7 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
         rateStable = newRateStable;
         rateEth = newRateEth;
         emit RatesUpdated(newRateStable, newRateEth);
+        emit PriceUpdated(_configUnitPriceUsd6());
     }
 
     /**
@@ -420,6 +441,7 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
         require(!finalized, "SALE_FINALIZED");
         kycPassed[user] = ok;
         emit KycStatusUpdated(user, ok);
+        emit KycStatusUpdated(user, ok, keccak256(abi.encodePacked(block.number, user, ok)));
     }
 
     /**
