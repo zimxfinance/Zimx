@@ -3,12 +3,13 @@ pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 /**
  * @title ZIMXVesting
  * @notice Linear vesting contract for team allocations governed by a multisig.
  */
-contract ZIMXVesting {
+contract ZIMXVesting is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     /// @notice Token being vested.
@@ -24,6 +25,8 @@ contract ZIMXVesting {
 
     /// @notice Governance address controlling schedule creation and management.
     address public governance;
+    /// @notice Address nominated to assume governance pending explicit acceptance.
+    address public pendingGovernance;
     /// @notice Aggregate amount of tokens still locked across all schedules.
     uint256 public totalLocked;
 
@@ -36,6 +39,24 @@ contract ZIMXVesting {
     /// @notice Mapping of beneficiary address to their vesting schedule.
     mapping(address => VestingSchedule) public schedules;
 
+    enum PromiseStatus {
+        Pending,
+        Kept,
+        Broken
+    }
+
+    struct OnChainPromise {
+        string details;
+        uint64 timestamp;
+        PromiseStatus status;
+    }
+
+    OnChainPromise[] private _promises;
+
+    /// @notice Emitted when governance transfer is initiated.
+    event GovernanceTransferStarted(address indexed currentGovernance, address indexed pendingGovernance);
+    /// @notice Emitted when a pending governance transfer is cancelled.
+    event GovernanceTransferCancelled(address indexed cancelledGovernance);
     /// @notice Emitted when governance is transferred.
     event GovernanceTransferred(address indexed previousGovernance, address indexed newGovernance);
     /// @notice Emitted when new vesting schedules are created.
@@ -46,6 +67,10 @@ contract ZIMXVesting {
     event VestingRevoked(address indexed beneficiary, uint256 refundedAmount);
     /// @notice Emitted when tokens are transferred into the vesting contract.
     event TeamVestingFunded(uint256 totalAmount);
+    /// @notice Emitted when an on-chain promise is recorded.
+    event OnChainPromiseRecorded(uint256 indexed promiseId, string details);
+    /// @notice Emitted when a promise status is updated.
+    event OnChainPromiseStatusUpdated(uint256 indexed promiseId, PromiseStatus status);
 
     modifier onlyGovernance() {
         require(msg.sender == governance, "NOT_GOVERNANCE");
@@ -87,8 +112,32 @@ contract ZIMXVesting {
      */
     function transferGovernance(address newGovernance) external onlyGovernance {
         require(newGovernance != address(0), "GOV_ZERO");
-        emit GovernanceTransferred(governance, newGovernance);
-        governance = newGovernance;
+        require(newGovernance != governance, "ALREADY_GOV");
+        require(pendingGovernance == address(0), "PENDING_GOV");
+        pendingGovernance = newGovernance;
+        emit GovernanceTransferStarted(governance, newGovernance);
+    }
+
+    /**
+     * @notice Cancels a pending governance transfer.
+     */
+    function cancelGovernanceTransfer() external onlyGovernance {
+        address pending = pendingGovernance;
+        require(pending != address(0), "NO_PENDING_GOV");
+        pendingGovernance = address(0);
+        emit GovernanceTransferCancelled(pending);
+    }
+
+    /**
+     * @notice Accepts a pending governance transfer.
+     */
+    function acceptGovernance() external {
+        address pending = pendingGovernance;
+        require(pending != address(0), "NO_PENDING_GOV");
+        require(msg.sender == pending, "NOT_PENDING_GOV");
+        pendingGovernance = address(0);
+        emit GovernanceTransferred(governance, pending);
+        governance = pending;
     }
 
     /**
@@ -96,7 +145,7 @@ contract ZIMXVesting {
      * @param from Address supplying the tokens (must approve this contract).
      * @param amount Amount of tokens to transfer.
      */
-    function fund(address from, uint256 amount) external onlyGovernance {
+    function fund(address from, uint256 amount) external onlyGovernance nonReentrant {
         require(from != address(0), "FROM_ZERO");
         require(amount > 0, "AMOUNT_ZERO");
         token.safeTransferFrom(from, address(this), amount);
@@ -156,7 +205,7 @@ contract ZIMXVesting {
     /**
      * @notice Releases vested tokens for the caller.
      */
-    function release() external {
+    function release() external nonReentrant {
         uint256 amount = releasable(msg.sender);
         require(amount > 0, "NOTHING_TO_RELEASE");
         VestingSchedule storage schedule = schedules[msg.sender];
@@ -171,7 +220,7 @@ contract ZIMXVesting {
      * @notice Revokes a vesting schedule when revocable vesting is enabled.
      * @param beneficiary Address whose schedule should be revoked.
      */
-    function revoke(address beneficiary) external onlyGovernance {
+    function revoke(address beneficiary) external onlyGovernance nonReentrant {
         require(revocable, "NOT_REVOCABLE");
         VestingSchedule storage schedule = schedules[beneficiary];
         require(schedule.totalAmount > 0, "NO_SCHEDULE");
@@ -198,6 +247,56 @@ contract ZIMXVesting {
         }
 
         emit VestingRevoked(beneficiary, refund);
+    }
+
+    /**
+     * @notice Records a new on-chain promise for the vesting program.
+     * @param details Description of the commitment made.
+     * @return promiseId Identifier of the stored promise.
+     */
+    function recordOnChainPromise(string calldata details) external onlyGovernance returns (uint256 promiseId) {
+        require(bytes(details).length > 0, "PROMISE_EMPTY");
+        promiseId = _promises.length;
+        _promises.push(OnChainPromise({details: details, timestamp: uint64(block.timestamp), status: PromiseStatus.Pending}));
+        emit OnChainPromiseRecorded(promiseId, details);
+    }
+
+    /**
+     * @notice Updates the status of a recorded promise.
+     * @param promiseId Identifier of the promise to update.
+     * @param status New status value.
+     */
+    function updateOnChainPromiseStatus(uint256 promiseId, PromiseStatus status) external onlyGovernance {
+        require(promiseId < _promises.length, "PROMISE_OOB");
+        OnChainPromise storage promise = _promises[promiseId];
+        require(promise.status != status, "STATUS_UNCHANGED");
+        promise.status = status;
+        promise.timestamp = uint64(block.timestamp);
+        emit OnChainPromiseStatusUpdated(promiseId, status);
+    }
+
+    /**
+     * @notice Returns information about a stored promise.
+     * @param promiseId Identifier of the promise.
+     * @return details Promise description.
+     * @return timestamp Timestamp of the most recent update.
+     * @return status Current status of the promise.
+     */
+    function getOnChainPromise(uint256 promiseId)
+        external
+        view
+        returns (string memory details, uint64 timestamp, PromiseStatus status)
+    {
+        require(promiseId < _promises.length, "PROMISE_OOB");
+        OnChainPromise storage promise = _promises[promiseId];
+        return (promise.details, promise.timestamp, promise.status);
+    }
+
+    /**
+     * @notice Returns the number of promises recorded on-chain.
+     */
+    function onChainPromiseCount() external view returns (uint256) {
+        return _promises.length;
     }
 
     function _vestedAmount(VestingSchedule memory schedule) internal view returns (uint256) {
