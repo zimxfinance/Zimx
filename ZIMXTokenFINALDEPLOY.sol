@@ -3,8 +3,9 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
-import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
 
 /**
  * @title ZIMXTokenFINALDEPLOY
@@ -59,14 +60,27 @@ contract ZIMXTokenFINALDEPLOY is ERC20, ERC20Burnable, Pausable, ERC20Permit {
     event OnChainPromiseStatusUpdated(uint256 indexed promiseId, PromiseStatus status);
 
     OnChainPromise[] private _promises;
+    /// @notice Address of the timelock controlling administrative actions.
+    address public timelock;
+    /// @notice Guardian allowed to unpause the token during emergencies.
+    address public guardian;
+
+    error NotGovernance();
+    error NotTimelock();
+    error NotGuardian();
 
     modifier onlyGovernance() {
-        require(msg.sender == governance, "NOT_GOVERNANCE");
+        if (msg.sender != governance) revert NotGovernance();
         _;
     }
 
-    modifier after2027() {
-        require(block.timestamp >= GOVERNANCE_ENABLE_TS, "GOV_LOCKED_UNTIL_2027");
+    modifier onlyTimelock() {
+        if (msg.sender != timelock) revert NotTimelock();
+        _;
+    }
+
+    modifier onlyGuardian() {
+        if (msg.sender != guardian) revert NotGuardian();
         _;
     }
 
@@ -82,6 +96,7 @@ contract ZIMXTokenFINALDEPLOY is ERC20, ERC20Burnable, Pausable, ERC20Permit {
         require(governance_ != address(0), "GOV_ZERO");
         require(treasury_ != address(0), "TREASURY_ZERO");
         governance = governance_;
+        timelock = governance_;
         treasury = treasury_;
 
         uint256 supply = 1_000_000_000 * 10 ** decimals();
@@ -106,7 +121,7 @@ contract ZIMXTokenFINALDEPLOY is ERC20, ERC20Burnable, Pausable, ERC20Permit {
      * @notice Transfers governance rights to a new address.
      * @param newGovernance Address of the new governance multisig.
      */
-    function transferGovernance(address newGovernance) external onlyGovernance after2027 {
+    function transferGovernance(address newGovernance) external onlyTimelock {
         _initiateGovernanceTransfer(newGovernance);
     }
 
@@ -114,14 +129,14 @@ contract ZIMXTokenFINALDEPLOY is ERC20, ERC20Burnable, Pausable, ERC20Permit {
      * @notice Initiates governance transfer using the ownership naming convention for compatibility.
      * @param newOwner Address of the contract set to receive governance powers.
      */
-    function transferOwnership(address newOwner) external onlyGovernance after2027 {
+    function transferOwnership(address newOwner) external onlyTimelock {
         _initiateGovernanceTransfer(newOwner);
     }
 
     /**
      * @notice Cancels a pending governance transfer.
      */
-    function cancelGovernanceTransfer() external onlyGovernance after2027 {
+    function cancelGovernanceTransfer() external onlyTimelock {
         address pending = pendingGovernance;
         require(pending != address(0), "NO_PENDING_GOV");
         pendingGovernance = address(0);
@@ -144,7 +159,7 @@ contract ZIMXTokenFINALDEPLOY is ERC20, ERC20Burnable, Pausable, ERC20Permit {
      * @notice Updates the treasury wallet. Disabled after sealing.
      * @param newTreasury Address of the new treasury wallet.
      */
-    function updateTreasury(address newTreasury) external onlyGovernance after2027 {
+    function updateTreasury(address newTreasury) external onlyTimelock {
         require(!treasurySealed, "TREASURY_SEALED");
         require(newTreasury != address(0), "TREASURY_ZERO");
         treasury = newTreasury;
@@ -154,7 +169,7 @@ contract ZIMXTokenFINALDEPLOY is ERC20, ERC20Burnable, Pausable, ERC20Permit {
     /**
      * @notice Permanently disables future treasury updates.
      */
-    function sealTreasury() external onlyGovernance after2027 {
+    function sealTreasury() external onlyTimelock {
         require(!treasurySealed, "TREASURY_SEALED");
         treasurySealed = true;
         emit TreasurySealed();
@@ -169,8 +184,7 @@ contract ZIMXTokenFINALDEPLOY is ERC20, ERC20Burnable, Pausable, ERC20Permit {
      */
     function distributeFromTreasury(address destination, uint256 amount, string calldata allocationName)
         external
-        onlyGovernance
-        after2027
+        onlyTimelock
     {
         require(destination != address(0), "DEST_ZERO");
         require(amount > 0, "AMOUNT_ZERO");
@@ -194,8 +208,19 @@ contract ZIMXTokenFINALDEPLOY is ERC20, ERC20Burnable, Pausable, ERC20Permit {
     /**
      * @notice Unpauses token transfers.
      */
-    function unpause() external onlyGovernance after2027 {
+    function unpause() external onlyGovernance {
         _unpause();
+    }
+
+    /**
+     * @notice Emergency unpause callable by the guardian.
+     */
+    function guardianUnpause() external onlyGuardian {
+        _unpause();
+    }
+
+    function recoverERC20(address token, uint256 amount) external onlyTimelock {
+        IERC20(token).transfer(governance, amount);
     }
 
     function _update(address from, address to, uint256 value) internal override whenNotPaused {
@@ -209,8 +234,7 @@ contract ZIMXTokenFINALDEPLOY is ERC20, ERC20Burnable, Pausable, ERC20Permit {
      */
     function recordOnChainPromise(string calldata details)
         external
-        onlyGovernance
-        after2027
+        onlyTimelock
         returns (uint256 promiseId)
     {
         require(bytes(details).length > 0, "PROMISE_EMPTY");
@@ -224,7 +248,7 @@ contract ZIMXTokenFINALDEPLOY is ERC20, ERC20Burnable, Pausable, ERC20Permit {
      * @param promiseId Identifier of the promise to update.
      * @param status New status value for the promise.
      */
-    function updateOnChainPromiseStatus(uint256 promiseId, PromiseStatus status) external onlyGovernance after2027 {
+    function updateOnChainPromiseStatus(uint256 promiseId, PromiseStatus status) external onlyTimelock {
         require(promiseId < _promises.length, "PROMISE_OOB");
         OnChainPromise storage promise = _promises[promiseId];
         require(promise.status != status, "STATUS_UNCHANGED");
@@ -255,6 +279,18 @@ contract ZIMXTokenFINALDEPLOY is ERC20, ERC20Burnable, Pausable, ERC20Permit {
      */
     function onChainPromiseCount() external view returns (uint256) {
         return _promises.length;
+    }
+
+    function setGovernance(address g) external onlyTimelock {
+        governance = g;
+    }
+
+    function setTimelock(address t) external onlyTimelock {
+        timelock = t;
+    }
+
+    function setGuardian(address g) external onlyTimelock {
+        guardian = g;
     }
 
     function _initiateGovernanceTransfer(address newGovernance) internal {

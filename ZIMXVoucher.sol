@@ -53,6 +53,10 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
     }
 
     OnChainPromise[] private _promises;
+    /// @notice Timelock contract responsible for administrative actions.
+    address public timelock;
+    /// @notice Guardian maintained for consistency with other components.
+    address public guardian;
 
     /// @notice Emitted when governance is transferred.
     event GovernanceTransferred(address indexed previousGovernance, address indexed newGovernance);
@@ -85,13 +89,22 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
     /// @notice Emitted when a voucher is redeemed.
     event VoucherRedeemed(bytes32 indexed code, address indexed redeemer, uint256 amount);
 
+    error NotGovernance();
+    error NotTimelock();
+    error NotGuardian();
+
     modifier onlyGovernance() {
-        require(msg.sender == governance, "NOT_GOVERNANCE");
+        if (msg.sender != governance) revert NotGovernance();
         _;
     }
 
-    modifier after2027() {
-        require(block.timestamp >= GOVERNANCE_ENABLE_TS, "GOV_LOCKED_UNTIL_2027");
+    modifier onlyTimelock() {
+        if (msg.sender != timelock) revert NotTimelock();
+        _;
+    }
+
+    modifier onlyGuardian() {
+        if (msg.sender != guardian) revert NotGuardian();
         _;
     }
 
@@ -106,6 +119,7 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
         require(escrow_ != address(0), "ESCROW_ZERO");
         token = token_;
         governance = governance_;
+        timelock = governance_;
         escrow = escrow_;
     }
 
@@ -113,7 +127,7 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
      * @notice Transfers governance rights to a new address.
      * @param newGovernance Address of the new governance multisig.
      */
-    function transferGovernance(address newGovernance) external onlyGovernance after2027 {
+    function transferGovernance(address newGovernance) external onlyGovernance {
         require(newGovernance != address(0), "GOV_ZERO");
         require(newGovernance != governance, "ALREADY_GOV");
         require(pendingGovernance == address(0), "PENDING_GOV");
@@ -124,7 +138,7 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
     /**
      * @notice Cancels a pending governance transfer.
      */
-    function cancelGovernanceTransfer() external onlyGovernance after2027 {
+    function cancelGovernanceTransfer() external onlyGovernance {
         address pending = pendingGovernance;
         require(pending != address(0), "NO_PENDING_GOV");
         pendingGovernance = address(0);
@@ -147,7 +161,7 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
      * @notice Updates the escrow wallet supplying redemption liquidity.
      * @param newEscrow New escrow wallet address.
      */
-    function setEscrow(address newEscrow) external onlyGovernance after2027 {
+    function setEscrow(address newEscrow) external onlyTimelock {
         require(newEscrow != address(0), "ESCROW_ZERO");
         escrow = newEscrow;
         emit EscrowUpdated(newEscrow);
@@ -157,9 +171,13 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
      * @notice Sets the amount of tokens that can be redeemed from the escrow wallet.
      * @param amount Amount of tokens approved for redemption.
      */
-    function setEscrowRedemptionAllowance(uint256 amount) external onlyGovernance after2027 {
+    function setEscrowRedemptionAllowance(uint256 amount) external onlyTimelock {
         escrowRedemptionAllowance = amount;
         emit EscrowRedemptionAllowanceSet(amount);
+    }
+
+    function escrowAllowance() external view returns (uint256) {
+        return token.allowance(escrow, address(this));
     }
 
     /**
@@ -172,7 +190,6 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
     function mint(address to, uint256 amount, uint64 unlockTimestamp)
         external
         onlyGovernance
-        after2027
         returns (uint256 tokenId)
     {
         require(to != address(0), "ZERO_ADDRESS");
@@ -217,7 +234,6 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
     function recordOnChainPromise(string calldata details)
         external
         onlyGovernance
-        after2027
         returns (uint256 promiseId)
     {
         require(bytes(details).length > 0, "PROMISE_EMPTY");
@@ -231,7 +247,7 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
      * @param promiseId Identifier of the promise to update.
      * @param status New status to assign.
      */
-    function updateOnChainPromiseStatus(uint256 promiseId, PromiseStatus status) external onlyGovernance after2027 {
+    function updateOnChainPromiseStatus(uint256 promiseId, PromiseStatus status) external onlyGovernance {
         require(promiseId < _promises.length, "PROMISE_OOB");
         OnChainPromise storage promise = _promises[promiseId];
         require(promise.status != status, "STATUS_UNCHANGED");
@@ -262,5 +278,17 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
      */
     function onChainPromiseCount() external view returns (uint256) {
         return _promises.length;
+    }
+
+    function setGovernance(address g) external onlyTimelock {
+        governance = g;
+    }
+
+    function setTimelock(address t) external onlyTimelock {
+        timelock = t;
+    }
+
+    function setGuardian(address g) external onlyTimelock {
+        guardian = g;
     }
 }
