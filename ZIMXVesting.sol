@@ -55,6 +55,10 @@ contract ZIMXVesting is ReentrancyGuard {
     }
 
     OnChainPromise[] private _promises;
+    /// @notice Address of the timelock responsible for administrative actions.
+    address public timelock;
+    /// @notice Guardian address retained for parity with other contracts.
+    address public guardian;
 
     /// @notice Emitted when governance transfer is initiated.
     event GovernanceTransferStarted(address indexed currentGovernance, address indexed pendingGovernance);
@@ -102,13 +106,22 @@ contract ZIMXVesting is ReentrancyGuard {
         bool revoked;
     }
 
+    error NotGovernance();
+    error NotTimelock();
+    error NotGuardian();
+
     modifier onlyGovernance() {
-        require(msg.sender == governance, "NOT_GOVERNANCE");
+        if (msg.sender != governance) revert NotGovernance();
         _;
     }
 
-    modifier after2027() {
-        require(block.timestamp >= GOVERNANCE_ENABLE_TS, "GOV_LOCKED_UNTIL_2027");
+    modifier onlyTimelock() {
+        if (msg.sender != timelock) revert NotTimelock();
+        _;
+    }
+
+    modifier onlyGuardian() {
+        if (msg.sender != guardian) revert NotGuardian();
         _;
     }
 
@@ -135,6 +148,7 @@ contract ZIMXVesting is ReentrancyGuard {
 
         token = token_;
         governance = governance_;
+        timelock = governance_;
         start = start_;
         cliffDuration = cliffDuration_;
         duration = duration_;
@@ -145,7 +159,7 @@ contract ZIMXVesting is ReentrancyGuard {
      * @notice Transfers governance rights to a new address.
      * @param newGovernance Address of the new governance multisig.
      */
-    function transferGovernance(address newGovernance) external onlyGovernance after2027 {
+    function transferGovernance(address newGovernance) external onlyGovernance {
         require(newGovernance != address(0), "GOV_ZERO");
         require(newGovernance != governance, "ALREADY_GOV");
         require(pendingGovernance == address(0), "PENDING_GOV");
@@ -156,7 +170,7 @@ contract ZIMXVesting is ReentrancyGuard {
     /**
      * @notice Cancels a pending governance transfer.
      */
-    function cancelGovernanceTransfer() external onlyGovernance after2027 {
+    function cancelGovernanceTransfer() external onlyGovernance {
         address pending = pendingGovernance;
         require(pending != address(0), "NO_PENDING_GOV");
         pendingGovernance = address(0);
@@ -193,7 +207,7 @@ contract ZIMXVesting is ReentrancyGuard {
      * @param beneficiaries Addresses receiving vesting schedules.
      * @param amounts Token amounts for each beneficiary.
      */
-    function batchCreateSchedules(address[] calldata beneficiaries, uint256[] calldata amounts) external onlyGovernance {
+    function batchCreateSchedules(address[] calldata beneficiaries, uint256[] calldata amounts) external onlyTimelock {
         require(beneficiaries.length == amounts.length, "LENGTH_MISMATCH");
         require(beneficiaries.length > 0, "EMPTY_ARRAY");
 
@@ -265,7 +279,7 @@ contract ZIMXVesting is ReentrancyGuard {
      * @notice Revokes a vesting schedule when revocable vesting is enabled.
      * @param beneficiary Address whose schedule should be revoked.
      */
-    function revoke(address beneficiary) external onlyGovernance nonReentrant {
+    function revoke(address beneficiary) external onlyTimelock nonReentrant {
         require(revocable, "NOT_REVOCABLE");
         StoredSchedule storage schedule = schedules[beneficiary];
         require(schedule.totalAmount > 0, "NO_SCHEDULE");
@@ -305,7 +319,6 @@ contract ZIMXVesting is ReentrancyGuard {
     function recordOnChainPromise(string calldata details)
         external
         onlyGovernance
-        after2027
         returns (uint256 promiseId)
     {
         require(bytes(details).length > 0, "PROMISE_EMPTY");
@@ -319,7 +332,7 @@ contract ZIMXVesting is ReentrancyGuard {
      * @param promiseId Identifier of the promise to update.
      * @param status New status value.
      */
-    function updateOnChainPromiseStatus(uint256 promiseId, PromiseStatus status) external onlyGovernance after2027 {
+    function updateOnChainPromiseStatus(uint256 promiseId, PromiseStatus status) external onlyGovernance {
         require(promiseId < _promises.length, "PROMISE_OOB");
         OnChainPromise storage promise = _promises[promiseId];
         require(promise.status != status, "STATUS_UNCHANGED");
@@ -350,6 +363,18 @@ contract ZIMXVesting is ReentrancyGuard {
      */
     function onChainPromiseCount() external view returns (uint256) {
         return _promises.length;
+    }
+
+    function setGovernance(address g) external onlyTimelock {
+        governance = g;
+    }
+
+    function setTimelock(address t) external onlyTimelock {
+        timelock = t;
+    }
+
+    function setGuardian(address g) external onlyTimelock {
+        guardian = g;
     }
 
     function _vestedAmount(StoredSchedule memory schedule) internal view returns (uint256) {

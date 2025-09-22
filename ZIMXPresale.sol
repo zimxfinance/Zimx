@@ -77,6 +77,12 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
     bool public burnUnsoldTokens;
     /// @notice Destination receiving unsold tokens when not burning.
     address public unsoldTokenRecipient;
+    /// @notice Flag preventing further parameter updates once frozen by governance.
+    bool public paramsFrozen;
+    /// @notice Address of the timelock responsible for parameter updates.
+    address public timelock;
+    /// @notice Guardian address empowered to unpause in emergencies.
+    address public guardian;
 
     /// @notice Emitted when a purchase occurs during the sale.
     event SalePurchased(address indexed buyer, uint256 zimxAmount, uint256 paidAmount, address indexed paymentToken);
@@ -161,13 +167,27 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
     /// @notice Emitted when a promise status is updated.
     event OnChainPromiseStatusUpdated(uint256 indexed promiseId, PromiseStatus status);
 
+    error NotGovernance();
+    error NotTimelock();
+    error NotGuardian();
+
     modifier onlyGovernance() {
-        require(msg.sender == governance, "NOT_GOVERNANCE");
+        if (msg.sender != governance) revert NotGovernance();
         _;
     }
 
-    modifier after2027() {
-        require(block.timestamp >= GOVERNANCE_ENABLE_TS, "GOV_LOCKED_UNTIL_2027");
+    modifier onlyTimelock() {
+        if (msg.sender != timelock) revert NotTimelock();
+        _;
+    }
+
+    modifier onlyGuardian() {
+        if (msg.sender != guardian) revert NotGuardian();
+        _;
+    }
+
+    modifier whenNotFrozen() {
+        require(!paramsFrozen, "PARAMS_FROZEN");
         _;
     }
 
@@ -197,6 +217,7 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
         require(address(token_) != address(0) && address(stablecoin_) != address(0), "TOKEN_ZERO");
         require(end_ > start_, "END_BEFORE_START");
         governance = governance_;
+        timelock = governance_;
         token = token_;
         stablecoin = stablecoin_;
         stableDecimals = IERC20Metadata(address(stablecoin_)).decimals();
@@ -343,7 +364,7 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
      * @param newExpectedTotal Minimum expected proceeds in 18-decimal precision.
      * @param newToleranceBps Allowed tolerance in basis points (0 - 10,000).
      */
-    function setExpectedTotals(uint256 newExpectedTotal, uint16 newToleranceBps) external onlyGovernance after2027 {
+    function setExpectedTotals(uint256 newExpectedTotal, uint16 newToleranceBps) external onlyGovernance {
         require(!finalized, "SALE_FINALIZED");
         require(newToleranceBps <= 10_000, "BPS_OOB");
         expectedTotal = newExpectedTotal;
@@ -356,7 +377,7 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
      * @param reserve Address of the reserve vault.
      * @param ops Address of the operations treasury.
      */
-    function setVaults(address reserve, address ops) external onlyGovernance after2027 {
+    function setVaults(address reserve, address ops) external onlyTimelock whenNotFrozen {
         require(!finalized, "SALE_FINALIZED");
         _setVaults(reserve, ops);
     }
@@ -364,7 +385,7 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
     /**
      * @notice Sweeps any leftover dust stablecoins or ETH to the operations treasury after finalization.
      */
-    function sweepDust() external onlyGovernance after2027 nonReentrant {
+    function sweepDust() external onlyGovernance nonReentrant {
         require(finalized, "SALE_NOT_FINALIZED");
         require(opsTreasury != address(0), "OPS_ZERO");
 
@@ -387,7 +408,7 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
      * @notice Updates the reserve split (pre-finalization only).
      * @param newReserveBps New reserve basis points (0 - 10,000).
      */
-    function setReserveSplit(uint16 newReserveBps) external onlyGovernance after2027 {
+    function setReserveSplit(uint16 newReserveBps) external onlyTimelock whenNotFrozen {
         require(!finalized, "SALE_FINALIZED");
         require(newReserveBps <= 10_000, "BPS_OOB");
         reserveBps = newReserveBps;
@@ -398,7 +419,7 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
      * @notice Updates the maximum allocation per buyer (pre-finalization only).
      * @param newBuyerMax New maximum in token units (6 decimals).
      */
-    function setBuyerMax(uint256 newBuyerMax) external onlyGovernance after2027 {
+    function setBuyerMax(uint256 newBuyerMax) external onlyGovernance {
         require(!finalized, "SALE_FINALIZED");
         require(newBuyerMax > 0 && newBuyerMax <= HARD_CAP, "INVALID_MAX");
         buyerMax = newBuyerMax;
@@ -411,7 +432,7 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
      * @param newRateStable New number of tokens per 1 stablecoin.
      * @param newRateEth New number of tokens per 1 ETH.
      */
-    function setRates(uint256 newRateStable, uint256 newRateEth) external onlyGovernance after2027 {
+    function setRates(uint256 newRateStable, uint256 newRateEth) external onlyTimelock whenNotFrozen {
         require(!finalized, "SALE_FINALIZED");
         rateStable = newRateStable;
         rateEth = newRateEth;
@@ -424,7 +445,7 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
      * @param newStart New start timestamp.
      * @param newEnd New end timestamp.
      */
-    function setTimes(uint64 newStart, uint64 newEnd) external onlyGovernance after2027 {
+    function setTimes(uint64 newStart, uint64 newEnd) external onlyTimelock whenNotFrozen {
         require(!finalized, "SALE_FINALIZED");
         require(newEnd > newStart, "END_BEFORE_START");
         startTime = newStart;
@@ -449,7 +470,7 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
      * @param burnUnsold Whether to burn unsold tokens to a terminal address.
      * @param recipient Recipient of unsold tokens when not burning.
      */
-    function configureUnsold(bool burnUnsold, address recipient) external onlyGovernance after2027 {
+    function configureUnsold(bool burnUnsold, address recipient) external onlyGovernance {
         require(!finalized, "SALE_FINALIZED");
         if (burnUnsold) {
             require(recipient == address(0), "RECIPIENT_IGNORED");
@@ -469,7 +490,6 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
     function recordOnChainPromise(string calldata details)
         external
         onlyGovernance
-        after2027
         returns (uint256 promiseId)
     {
         require(bytes(details).length > 0, "PROMISE_EMPTY");
@@ -483,7 +503,7 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
      * @param promiseId Identifier of the promise to update.
      * @param status New status to set for the promise.
      */
-    function updateOnChainPromiseStatus(uint256 promiseId, PromiseStatus status) external onlyGovernance after2027 {
+    function updateOnChainPromiseStatus(uint256 promiseId, PromiseStatus status) external onlyGovernance {
         require(promiseId < _promises.length, "PROMISE_OOB");
         OnChainPromise storage promise = _promises[promiseId];
         require(promise.status != status, "STATUS_UNCHANGED");
@@ -544,7 +564,14 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
     /**
      * @notice Unpause purchases.
      */
-    function unpause() external onlyGovernance after2027 {
+    function unpause() external onlyGovernance {
+        _unpause();
+    }
+
+    /**
+     * @notice Allows the designated guardian to unpause during emergencies.
+     */
+    function guardianUnpause() external onlyGuardian {
         _unpause();
     }
 
@@ -552,7 +579,7 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
      * @notice Transfers governance rights to a new address.
      * @param newGovernance Address of the new governance multisig.
      */
-    function transferGovernance(address newGovernance) external onlyGovernance after2027 {
+    function transferGovernance(address newGovernance) external onlyGovernance {
         require(newGovernance != address(0), "GOV_ZERO");
         require(newGovernance != governance, "ALREADY_GOV");
         require(pendingGovernance == address(0), "PENDING_GOV");
@@ -563,7 +590,7 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
     /**
      * @notice Cancels a pending governance transfer.
      */
-    function cancelGovernanceTransfer() external onlyGovernance after2027 {
+    function cancelGovernanceTransfer() external onlyGovernance {
         address pending = pendingGovernance;
         require(pending != address(0), "NO_PENDING_GOV");
         pendingGovernance = address(0);
@@ -581,6 +608,25 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
         emit GovernanceTransferred(governance, pending);
         emit KycProviderUpdated(governance, pending);
         governance = pending;
+    }
+
+    /**
+     * @notice Permanently disables further parameter updates.
+     */
+    function freeze() external onlyTimelock {
+        paramsFrozen = true;
+    }
+
+    function setGovernance(address g) external onlyTimelock {
+        governance = g;
+    }
+
+    function setTimelock(address t) external onlyTimelock {
+        timelock = t;
+    }
+
+    function setGuardian(address g) external onlyTimelock {
+        guardian = g;
     }
 
     /**
