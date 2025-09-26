@@ -22,8 +22,10 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
     /// @notice Timestamp when governance-controlled configuration becomes available (2027-01-01 UTC).
     uint256 public constant GOVERNANCE_ENABLE_TS = 1_798_761_600;
 
-    /// @notice Total number of tokens that can be sold via the presale (6 decimals).
-    uint256 public constant HARD_CAP = 50_000_000 * 10 ** 6;
+    /// @notice Total number of tokens that can be sold via the presale (6 decimals) – 10% of supply.
+    uint256 public constant HARD_CAP = 100_000_000 * 10 ** 6;
+    /// @notice Target amount to raise across all assets normalised to 18 decimals (£10m at £0.10 per token).
+    uint256 public constant PRESALE_RAISE_TARGET = 10_000_000 * 10 ** 18;
 
     /// @notice Address responsible for privileged governance actions (intended multisig).
     address public governance;
@@ -38,7 +40,7 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
     uint8 public immutable stableDecimals;
 
     /// @notice Maximum tokens a single buyer can acquire (6 decimals).
-    uint256 public buyerMax = 500_000 * 10 ** 6;
+    uint256 public buyerMax = 1_000_000 * 10 ** 6;
     /// @notice Portion of proceeds sent to the reserve vault (basis points).
     uint16 public reserveBps = 5000;
 
@@ -228,6 +230,8 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
         if (reserveVault_ != address(0) && opsTreasury_ != address(0)) {
             _setVaults(reserveVault_, opsTreasury_);
         }
+
+        expectedTotal = PRESALE_RAISE_TARGET;
     }
 
     /// @notice Current token rate when purchasing with the stablecoin (tokens per one stable unit).
