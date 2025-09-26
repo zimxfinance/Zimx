@@ -18,6 +18,9 @@ contract ZIMXVoucher is ERC721, ReentrancyGuard {
     /// @notice Timestamp when governance managed voucher features become available (2027-01-01 UTC).
     uint256 public constant GOVERNANCE_ENABLE_TS = 1_798_761_600;
 
+    /// @notice Mirror of the presale allocation for analytics (10% of total supply at 6 decimals).
+    uint256 public constant PRESALE_ALLOCATION = 100_000_000 * 10 ** 6;
+
     /// @notice ZIMX token that vouchers can be redeemed for.
     IERC20 public immutable token;
     /// @notice Governance address managing voucher issuance.
