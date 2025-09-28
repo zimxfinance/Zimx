@@ -51,7 +51,9 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
     /// @notice Timestamp of the last vault update used to enforce a delay before finalization.
     uint64 public vaultsLastSet;
 
-    /// @notice Minimum expected total proceeds (18 decimals) required before finalization.
+    /// @notice Minimum expected total proceeds required before finalization.
+    // expectedTotal: target raise in STABLE currency, normalized to 18 decimals.
+    // Example (USDC 6 decimals): expectedTotal = (stableTarget * 1e18) / 1e6.
     uint256 public expectedTotal;
     /// @notice Allowed tolerance around the expected total expressed in basis points.
     uint16 public toleranceBps;
@@ -108,6 +110,8 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
     event BuyerMaxUpdated(uint256 newBuyerMax);
     /// @notice Emitted when sale rates are updated.
     event RatesUpdated(uint256 newRateStable, uint256 newRateEth);
+    /// @notice Emitted when the ETH rate is explicitly updated.
+    event RateEthUpdated(uint256 newRateEth);
     /// @notice Emitted when sale times are updated.
     event TimesUpdated(uint64 newStart, uint64 newEnd);
     /// @notice Emitted when KYC status is changed for a participant.
@@ -143,6 +147,8 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
     event HardCapReached(uint256 totalSold);
     /// @notice Emitted when the sale is closed with aggregate totals recorded.
     event SaleClosed(uint256 totalSold, uint256 stableRaised, uint256 nativeRaised, uint256 timestamp);
+    /// @notice Emitted when ETH contributions are disabled for the presale.
+    event EthDisabled();
 
     enum PromiseStatus {
         Pending,
@@ -223,8 +229,9 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
         token = token_;
         stablecoin = stablecoin_;
         stableDecimals = IERC20Metadata(address(stablecoin_)).decimals();
+        require(rateEth_ == 0, "ETH rate must be 0 (ETH disabled)");
         rateStable = rateStable_;
-        rateEth = rateEth_;
+        rateEth = 0;
         startTime = start_;
         endTime = end_;
         if (reserveVault_ != address(0) && opsTreasury_ != address(0)) {
@@ -232,6 +239,8 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
         }
 
         expectedTotal = PRESALE_RAISE_TARGET;
+        emit RateEthUpdated(0);
+        emit EthDisabled();
     }
 
     /// @notice Current token rate when purchasing with the stablecoin (tokens per one stable unit).
@@ -276,6 +285,7 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
      * @notice Purchase tokens with ETH.
      */
     function buyWithEth() external payable nonReentrant whenNotPaused {
+        revert("ETH purchases disabled for this presale");
         require(rateEth > 0, "ETH_DISABLED");
         require(!finalized, "SALE_FINALIZED");
         require(block.timestamp >= startTime && block.timestamp <= endTime, "SALE_INACTIVE");
@@ -315,11 +325,10 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
         require(block.timestamp >= vaultsLastSet + 3600, "VAULT_DELAY");
 
         uint256 stableBalance = stablecoin.balanceOf(address(this));
-        uint256 ethBalance = address(this).balance;
 
-        uint256 normalizedTotal = _normalizeStable(stableBalance) + ethBalance;
-        uint256 minExpected = (expectedTotal * (10_000 - toleranceBps)) / 10_000;
-        require(normalizedTotal >= minExpected, "TOTAL_BELOW_EXPECTATION");
+        uint256 normalizedTotal = _normalizeStableAmount(stableBalance);
+        uint256 floor = expectedTotal - (expectedTotal * toleranceBps / 10_000);
+        require(normalizedTotal >= floor, "Finalize: proceeds below expected floor");
 
         finalized = true;
         emit SaleClosed();
@@ -327,8 +336,8 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
 
         uint256 reserveStable = (stableBalance * reserveBps) / 10_000;
         uint256 opsStable = stableBalance - reserveStable;
-        uint256 reserveEth = (ethBalance * reserveBps) / 10_000;
-        uint256 opsEth = ethBalance - reserveEth;
+        uint256 reserveEth = 0;
+        uint256 opsEth = 0;
 
         if (reserveStable > 0) {
             stablecoin.safeTransfer(reserveVault, reserveStable);
@@ -337,16 +346,6 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
         if (opsStable > 0) {
             stablecoin.safeTransfer(opsTreasury, opsStable);
         }
-        if (reserveEth > 0) {
-            (bool sentReserve, ) = reserveVault.call{value: reserveEth}("");
-            require(sentReserve, "RESERVE_ETH_FAIL");
-            emit ReserveInjection(address(0), reserveEth, reserveVault);
-        }
-        if (opsEth > 0) {
-            (bool sentOps, ) = opsTreasury.call{value: opsEth}("");
-            require(sentOps, "OPS_ETH_FAIL");
-        }
-
         emit ProceedsSplit(reserveStable, opsStable, reserveEth, opsEth);
 
         uint256 unsold = token.balanceOf(address(this));
@@ -438,10 +437,17 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
      */
     function setRates(uint256 newRateStable, uint256 newRateEth) external onlyTimelock whenNotFrozen {
         require(!finalized, "SALE_FINALIZED");
+        require(newRateEth == 0, "ETH rate must be 0 (ETH disabled)");
         rateStable = newRateStable;
-        rateEth = newRateEth;
-        emit RatesUpdated(newRateStable, newRateEth);
+        rateEth = 0;
+        emit RatesUpdated(newRateStable, 0);
         emit PriceUpdated(_configUnitPriceUsd6());
+    }
+
+    function setRateEth(uint256 newRateEth) external onlyGovernance {
+        require(newRateEth == 0, "ETH rate must be 0 (ETH disabled)");
+        rateEth = 0;
+        emit RateEthUpdated(0);
     }
 
     /**
@@ -669,14 +675,10 @@ contract ZIMXPresale is Pausable, ReentrancyGuard {
         }
     }
 
-    function _normalizeStable(uint256 amount) internal view returns (uint256) {
-        if (stableDecimals == 18) {
-            return amount;
-        } else if (stableDecimals < 18) {
-            return amount * (10 ** (18 - stableDecimals));
-        } else {
-            return amount / (10 ** (stableDecimals - 18));
-        }
+    function _normalizeStableAmount(uint256 amt) internal view returns (uint256) {
+        if (stableDecimals == 18) return amt;
+        if (stableDecimals < 18) return amt * (10 ** (18 - stableDecimals));
+        return amt / (10 ** (stableDecimals - 18));
     }
 
     receive() external payable {
