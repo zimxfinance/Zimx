@@ -15,9 +15,3 @@ ZIMX is the fixed-supply governance and utility token powering presale, vesting 
 
 ---
 
-## Features
-- Immutable supply (1,000,000,000 ZIMX)
-- Governance functions locked until 2027
-- Presale capped at 100M ZIMX raising £10m at £0.10 with enforced reserve split
-- Transparent events for allocations, purchases, vesting and vouchers
-- Ownership through multisig + timelock
